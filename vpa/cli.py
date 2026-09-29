@@ -16,7 +16,7 @@ from rich.table import Table
 from rich.text import Text
 
 from . import config as config_mod
-from . import db, explain, learn, metrics, pipeline, recommend, report
+from . import db, explain, learn, metrics, pipeline, recommend, report, tribe
 from .providers import LLMError
 
 app = typer.Typer(
@@ -78,6 +78,17 @@ def analyse(
 
     if not video.exists():
         _fail(f"No such file: {video}")
+
+    # Tell the user what they are committing to before a long encode starts,
+    # so a 38-minute run doesn't look like a hang.
+    info = tribe.probe(video)
+    est_min = info.duration_s * 96 / 60
+    if est_min >= 3:
+        console.print(
+            f"  [dim]{info.duration_s:.0f}s of video — expect roughly "
+            f"{est_min:.0f} min on CPU. Lower tribe.target_fps to trade "
+            f"resolution for speed.[/dim]"
+        )
 
     with Progress(
         SpinnerColumn(),

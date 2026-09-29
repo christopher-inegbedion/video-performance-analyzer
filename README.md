@@ -150,7 +150,36 @@ The last two are why word timings are generated locally with faster-whisper and
 written to the `.tsv` cache TRIBE reads — whisperx is never invoked. The language
 pathway is **off by default**, so vision + audition work with no licence gate.
 
-Expect a few minutes per 30-second video on CPU.
+### How long it takes
+
+Scoring is dominated entirely by the video encoder. Setup — importing the
+package, loading the checkpoint, building events — is about 8 seconds. Everything
+after that scales with how much footage you feed it.
+
+Measured on an Apple Silicon laptop (CPU only), roughly **96x realtime**:
+
+| video length | time to score |
+|---:|---:|
+| 10s | ~16 min |
+| 15s | ~24 min |
+| 24s | ~38 min |
+| 60s | ~96 min |
+
+**This is not an interactive tool.** Start a run and come back to it.
+
+Three ways to make it tractable:
+
+- **Halve the frame rate.** `target_fps = 12` roughly halves the encode, because
+  cost is proportional to frames. V-JEPA samples frames rather than reading every
+  one, so the quality cost is plausibly small — but that is untested, so measure
+  it on your own material before trusting it.
+- **Score an excerpt.** For a feed asset the first 6-10 seconds is where the
+  scroll decision happens. Scoring only the opening is a legitimate strategy.
+- **Use a GPU.** This is what the model was built for and it is a different order
+  of magnitude. Set `device = "cuda"`.
+
+There is no caching or warm-start trick that helps: the cost is the encoder, not
+the setup.
 
 ## Licences
 

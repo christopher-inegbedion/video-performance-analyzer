@@ -64,8 +64,12 @@ class TribeConfig:
     # with no meaningful change to what the model sees.
     scale_width: int = 360
     scale_height: int = 640
-    # Frame rate matters a lot: the encoder works in fixed-length frame clips, so a
-    # 60fps source costs ~2.5x a 24fps one for the same seconds of footage.
+    # Frame rate is the main cost lever. Scoring runs at roughly 96x realtime on
+    # CPU — a 24s video takes ~38 minutes — and cost is proportional to frames,
+    # so halving this roughly halves the run. V-JEPA samples frames rather than
+    # reading every one, so the quality cost of 12fps is plausibly small, but
+    # that is untested: measure it on your own material before trusting it.
+    # Normalising frame rate is also what makes two evaluations comparable.
     target_fps: int = 24
     # Language pathway needs a gated Llama repo + HF token. Off by default so the
     # tool works out of the box with vision + audition only.
