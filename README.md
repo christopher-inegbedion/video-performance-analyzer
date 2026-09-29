@@ -1,5 +1,10 @@
 # video-performance-analyzer
 
+[![PyPI](https://img.shields.io/pypi/v/video-performance-analyzer)](https://pypi.org/project/video-performance-analyzer/)
+[![Python](https://img.shields.io/pypi/pyversions/video-performance-analyzer)](https://pypi.org/project/video-performance-analyzer/)
+[![test](https://github.com/christopher-inegbedion/video-performance-analyzer/actions/workflows/test.yml/badge.svg)](https://github.com/christopher-inegbedion/video-performance-analyzer/actions/workflows/test.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+
 Predict how a video lands before you publish it — then find out whether the
 prediction was right, and get better advice because of it.
 
@@ -51,17 +56,24 @@ Use it to rank variants of the same idea. Don't use it as a verdict on one video
 
 ## Install
 
-Not on PyPI yet — install from source:
+```bash
+pip install video-performance-analyzer          # core
+pip install 'video-performance-analyzer[tribe]' # + scoring dependencies (~3GB of models)
+pip install git+https://github.com/facebookresearch/tribev2.git
+```
+
+TRIBE itself is not on PyPI, so that last line is always needed for scoring.
+
+<details>
+<summary>From source instead</summary>
 
 ```bash
 git clone https://github.com/christopher-inegbedion/video-performance-analyzer.git
 cd video-performance-analyzer
 python3.12 -m venv .venv && source .venv/bin/activate
-
-pip install -e .                         # core
-pip install -e '.[tribe]'                # + scoring dependencies (~3GB of models)
-pip install git+https://github.com/facebookresearch/tribev2.git
+pip install -e '.[dev]'
 ```
+</details>
 
 You also need **ffmpeg** (`brew install ffmpeg` / `apt install ffmpeg`) and an
 API key for whichever LLM you point it at:
