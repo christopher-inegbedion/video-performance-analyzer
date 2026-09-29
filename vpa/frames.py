@@ -102,6 +102,21 @@ def key_moments(features: Features, include_segments: bool = True) -> list[tuple
     return seen
 
 
+def _run(cmd: list[str]) -> bool:
+    """Run ffmpeg, reporting success as a bool.
+
+    ffmpeg is an optional runtime dependency: frames are a convenience layered
+    on top of an evaluation, and an evaluation is still valid without them. A
+    missing binary raises FileNotFoundError from subprocess rather than
+    returning non-zero, so it has to be caught explicitly or it takes down the
+    whole run on any machine without ffmpeg installed.
+    """
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True).returncode == 0
+    except (FileNotFoundError, OSError):
+        return False
+
+
 def extract(
     video: Path,
     features: Features,
@@ -116,20 +131,16 @@ def extract(
     for label, time_s, note in key_moments(features, include_segments):
         safe = label.replace(": ", "-").replace(" ", "-").replace("/", "-")
         target = out_dir / f"{safe}_{time_s:06.2f}s.jpg"
-        result = subprocess.run(
-            [
-                "ffmpeg", "-v", "error",
-                "-ss", f"{time_s:.3f}",
-                "-i", str(video),
-                "-frames:v", "1",
-                "-vf", f"scale={width}:-2",
-                "-q:v", "3",
-                str(target), "-y",
-            ],
-            capture_output=True,
-            text=True,
-        )
-        if result.returncode != 0 or not target.exists():
+        ok = _run([
+            "ffmpeg", "-v", "error",
+            "-ss", f"{time_s:.3f}",
+            "-i", str(video),
+            "-frames:v", "1",
+            "-vf", f"scale={width}:-2",
+            "-q:v", "3",
+            str(target), "-y",
+        ])
+        if not ok or not target.exists():
             continue
         frames.append(
             KeyFrame(label, round(time_s, 2), round(_value_at(features, time_s), 3),
@@ -165,8 +176,7 @@ def contact_sheet(frames: list[KeyFrame], target: Path, per_row: int = 4) -> Pat
     layout += ":fill=black"
 
     cmd += ["-filter_complex", layout, "-frames:v", "1", str(target), "-y"]
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0 or not target.exists():
+    if not _run(cmd) or not target.exists():
         # A contact sheet is a convenience; individual frames are the substance.
         return None
     _ = rows

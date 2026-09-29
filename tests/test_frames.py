@@ -109,3 +109,27 @@ def test_value_lookup_round_trips_at_any_resolution(n_steps):
     f = make(trace, duration=6.067)
     assert frames._value_at(f, f.peak_time_s) == pytest.approx(f.peak_value, abs=0.01)
     assert frames._value_at(f, f.trough_time_s) == pytest.approx(f.trough_value, abs=0.01)
+
+
+def test_extract_degrades_when_ffmpeg_is_not_installed(tmp_path, monkeypatch):
+    """ffmpeg is optional. Without it we lose frames, not the whole evaluation.
+
+    subprocess raises FileNotFoundError for a missing binary rather than
+    returning non-zero, so this path is distinct from "ffmpeg ran and failed"
+    and is invisible on any machine that happens to have ffmpeg installed.
+    """
+    def missing(*args, **kwargs):
+        raise FileNotFoundError(2, "No such file or directory: 'ffmpeg'")
+
+    monkeypatch.setattr(frames.subprocess, "run", missing)
+    f = make([1, 2, 1])
+    assert frames.extract(tmp_path / "clip.mp4", f, tmp_path / "out") == []
+
+
+def test_contact_sheet_degrades_when_ffmpeg_is_not_installed(tmp_path, monkeypatch):
+    def missing(*args, **kwargs):
+        raise FileNotFoundError(2, "No such file or directory: 'ffmpeg'")
+
+    monkeypatch.setattr(frames.subprocess, "run", missing)
+    shot = frames.KeyFrame("peak", 1.0, 0.9, str(tmp_path / "a.jpg"), "note")
+    assert frames.contact_sheet([shot], tmp_path / "sheet.jpg") is None
