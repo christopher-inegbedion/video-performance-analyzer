@@ -351,12 +351,22 @@ def run(
         mods = ", ".join(modalities)
         tick("encoding", 0.40, mods)
 
+        # A run may start more than one bar (the encoder, then a shorter pass).
+        # Without this guard the second one resets the display from 95% back to
+        # 40%, which reads as the whole job restarting.
+        high_water = [0.40]
+
         def relay(desc: str, done: int, total: int) -> None:
             if not total:
                 return
             frac = 0.40 + 0.55 * (done / total)
+            high_water[0] = max(high_water[0], min(frac, 0.95))
             label = (desc or "encoding").lower().replace("encoding video", "encoding")
-            tick(label.strip() or "encoding", min(frac, 0.95), f"chunk {done}/{total} · {mods}")
+            tick(
+                label.strip() or "encoding",
+                high_water[0],
+                f"chunk {done}/{total} · {mods}",
+            )
 
         with relay_tqdm(relay):
             preds, _ = model.predict(events=events, verbose=False)

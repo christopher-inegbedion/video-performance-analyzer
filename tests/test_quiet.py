@@ -94,3 +94,38 @@ def test_quiet_imports_restores_logger_levels():
     with quiet_imports():
         assert logger.level == logging.ERROR
     assert logger.level == logging.DEBUG
+
+
+def test_relay_reaches_modules_that_imported_tqdm_early(monkeypatch):
+    """The failure this relay actually shipped with.
+
+    Libraries do `from tqdm import tqdm` at import time, binding the original
+    class into their own namespace. Patching `tqdm.tqdm` never reaches that
+    copy, so the encoder kept drawing its own bar and our display stayed frozen
+    for the entire run — while a test that called `tqdm.tqdm()` directly passed.
+
+    This test imitates the real import pattern instead.
+    """
+    import sys
+    import types
+
+    import tqdm as tqdm_mod
+
+    # A stand-in for neuralset.extractors.video: grabs tqdm at import time.
+    fake = types.ModuleType("vpa_fake_library")
+    fake.tqdm = tqdm_mod.tqdm  # the binding that defeated the old patch
+    monkeypatch.setitem(sys.modules, "vpa_fake_library", fake)
+
+    seen: list[int] = []
+    with relay_tqdm(lambda desc, done, total: seen.append(done)):
+        # The library calls ITS bound reference, not tqdm.tqdm
+        bar = fake.tqdm(total=4, desc="Encoding video")
+        for _ in range(4):
+            bar.update(1)
+        bar.close()
+
+    assert seen, "progress from an early-bound tqdm never reached the display"
+    assert seen[-1] == 4
+
+    # and the library's own reference must be handed back
+    assert fake.tqdm is tqdm_mod.tqdm

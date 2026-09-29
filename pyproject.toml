@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "video-performance-analyzer"
-version = "0.1.0"
+version = "0.1.1"
 description = "Predict and compare how videos land, using Meta's TRIBE v2 brain-encoding model, with LLM recommendations that learn from real performance."
 readme = "README.md"
 # Verified on 3.11, 3.12 and 3.13. 3.10 will probably work but is untested.

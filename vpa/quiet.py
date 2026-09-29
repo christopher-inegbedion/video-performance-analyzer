@@ -115,11 +115,33 @@ def relay_tqdm(on_update: TqdmFn | None) -> Iterator[None]:
             self._report()
             return result
 
+    # Patching tqdm.tqdm alone is NOT enough, and this is the trap that made an
+    # earlier version of this relay silently do nothing.
+    #
+    # neuralset does `from tqdm import tqdm` at module import time, which binds
+    # the original class into its own namespace. Rebinding the attribute on the
+    # tqdm module never reaches that copy, so the encoder kept using the real
+    # tqdm and our display sat frozen for the whole run.
+    #
+    # So: rebind the name in every module that already holds a reference to it.
+    rebound: list[tuple[object, str]] = []
+    for module in list(sys.modules.values()):
+        if module is None or module is tqdm_mod or module is tqdm_auto:
+            continue
+        for attr in ("tqdm",):
+            with contextlib.suppress(Exception):
+                if getattr(module, attr, None) in (original, original_auto):
+                    setattr(module, attr, _Relaying)
+                    rebound.append((module, attr))
+
     tqdm_mod.tqdm = _Relaying
     tqdm_auto.tqdm = _Relaying
     try:
         yield
     finally:
+        for module, attr in rebound:
+            with contextlib.suppress(Exception):
+                setattr(module, attr, original)
         tqdm_mod.tqdm = original
         tqdm_auto.tqdm = original_auto
 
