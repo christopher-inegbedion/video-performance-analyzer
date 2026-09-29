@@ -1,0 +1,96 @@
+"""The output-handling layer is what makes a 40-minute run followable."""
+
+from __future__ import annotations
+
+import logging
+import sys
+
+from vpa.quiet import captured_output, quiet_imports, relay_tqdm
+
+
+def test_captured_output_diverts_prints():
+    with captured_output() as buf:
+        print("noisy library message")
+        print("to stderr", file=sys.stderr)
+    assert "noisy library message" in buf.getvalue()
+    assert "to stderr" in buf.getvalue()
+
+
+def test_captured_output_restores_streams():
+    before_out, before_err = sys.stdout, sys.stderr
+    with captured_output():
+        pass
+    assert sys.stdout is before_out
+    assert sys.stderr is before_err
+
+
+def test_captured_output_catches_preexisting_log_handlers():
+    """Handlers created before the capture hold their own stream reference.
+
+    This is the case that leaked in practice: a library configures its logger at
+    import time, so swapping sys.stderr never reaches it.
+    """
+    logger = logging.getLogger("vpa_test_preexisting")
+    logger.handlers.clear()
+    handler = logging.StreamHandler(sys.stderr)  # bound to the REAL stderr now
+    logger.addHandler(handler)
+    logger.setLevel(logging.WARNING)
+    logger.propagate = False
+
+    with captured_output() as buf:
+        logger.warning("this must not reach the terminal")
+
+    assert "this must not reach the terminal" in buf.getvalue()
+    # and the handler must be given its original stream back
+    assert handler.stream is sys.stderr
+    logger.handlers.clear()
+
+
+def test_captured_output_appends_to_sink():
+    sink: list[str] = []
+    with captured_output(sink):
+        print("kept for --verbose")
+    assert sink and "kept for --verbose" in sink[0]
+
+
+def test_relay_tqdm_reports_real_progress():
+    """The encode is the slow part; its progress must reach our display."""
+    import tqdm
+
+    seen: list[tuple[str, int, int]] = []
+    with relay_tqdm(lambda desc, done, total: seen.append((desc, done, total))):
+        bar = tqdm.tqdm(total=10, desc="Encoding video")
+        for _ in range(10):
+            bar.update(1)
+        bar.close()
+
+    assert seen, "no progress was relayed"
+    assert seen[-1][1] == 10 and seen[-1][2] == 10
+    assert "Encoding" in seen[-1][0]
+    # It must climb, not just report the endpoints.
+    assert [s[1] for s in seen] == sorted(s[1] for s in seen)
+
+
+def test_relay_tqdm_restores_tqdm():
+    import tqdm
+
+    original = tqdm.tqdm
+    with relay_tqdm(lambda *a: None):
+        assert tqdm.tqdm is not original
+    assert tqdm.tqdm is original
+
+
+def test_relay_tqdm_with_no_callback_is_a_noop():
+    import tqdm
+
+    original = tqdm.tqdm
+    with relay_tqdm(None):
+        assert tqdm.tqdm is original
+
+
+def test_quiet_imports_restores_logger_levels():
+    logger = logging.getLogger("neuralset")
+    logger.setLevel(logging.DEBUG)
+    with quiet_imports():
+        assert logger.level == logging.ERROR
+    assert logger.level == logging.DEBUG

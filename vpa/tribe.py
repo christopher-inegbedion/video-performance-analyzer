@@ -21,6 +21,7 @@ a laptop. Everything in this module exists because of a specific failure:
 
 from __future__ import annotations
 
+import contextlib
 import csv
 import json
 import shutil
@@ -184,7 +185,7 @@ def write_word_timings(wav: Path, model_name: str = "base.en", enable: bool = Tr
 # ------------------------------------------------------- checkpoint repair
 
 
-def patch_checkpoint_config(checkpoint: str, cache_dir: Path, device: str) -> list[str]:
+def patch_checkpoint_config(checkpoint: str, cache_dir: Path | None, device: str) -> list[str]:
     """Rewrite cluster-specific settings in the downloaded checkpoint config.
 
     Returns a list of human-readable changes so the tool can tell the user what
@@ -198,7 +199,7 @@ def patch_checkpoint_config(checkpoint: str, cache_dir: Path, device: str) -> li
             "'video-performance-analyzer[tribe]'"
         ) from exc
 
-    snap = Path(snapshot_download(checkpoint, cache_dir=str(cache_dir) or None))
+    snap = Path(snapshot_download(checkpoint, cache_dir=str(cache_dir) if cache_dir else None))
     cfg_file = snap / "config.yaml"
     if not cfg_file.exists():
         return []
@@ -287,7 +288,7 @@ def run(
     try:
         import numpy as np
 
-        from .quiet import quiet_imports
+        from .quiet import captured_output, quiet_imports, relay_tqdm
 
         with quiet_imports():
             from tribev2 import TribeModel
@@ -299,38 +300,71 @@ def run(
         ) from exc
 
     notes: list[str] = []
+    raw_log: list[str] = []
     device = resolve_device(cfg.tribe.device)
     tick("preparing", 0.05, f"device={device}")
 
-    changes = patch_checkpoint_config(cfg.tribe.checkpoint, cfg.tribe_cache, device)
-    notes.extend(changes)
-    if fix := patch_whisperx_compute_type():
-        notes.append(fix)
+    # Everything below touches libraries that print at unpredictable points.
+    # Divert all of it so the progress display stays readable; the text is kept
+    # in raw_log for --verbose and surfaced in full if the run fails.
+    stack = contextlib.ExitStack()
+    stack.enter_context(quiet_imports())
+    stack.enter_context(captured_output(raw_log))
+    with stack:
+        changes = patch_checkpoint_config(cfg.tribe.checkpoint, cfg.tribe_cache, device)
+        notes.extend(changes)
+        if fix := patch_whisperx_compute_type():
+            notes.append(fix)
 
-    tick("preparing", 0.12, "normalising video")
-    prepared = prepare(video, workdir, cfg, keep_audio=True)
+        tick("preparing", 0.12, "normalising video")
+        prepared = prepare(video, workdir, cfg, keep_audio=True)
 
-    wav = extract_wav(prepared, workdir / "prepared.wav")
-    if wav:
-        tick("transcribing", 0.20, "word timings" if cfg.tribe.enable_language else "skipped")
-        write_word_timings(wav, cfg.tribe.whisper_model, enable=cfg.tribe.enable_language)
-        if not cfg.tribe.enable_language:
-            notes.append(
-                "language pathway off (needs gated meta-llama/Llama-3.2-1B); "
-                "scored on vision + audition"
-            )
+        wav = extract_wav(prepared, workdir / "prepared.wav")
+        if wav:
+            tick("transcribing", 0.20, "word timings" if cfg.tribe.enable_language else "skipped")
+            write_word_timings(wav, cfg.tribe.whisper_model, enable=cfg.tribe.enable_language)
+            if not cfg.tribe.enable_language:
+                notes.append(
+                    "language pathway off (needs gated meta-llama/Llama-3.2-1B); "
+                    "scored on vision + audition"
+                )
 
-    tick("loading", 0.25, cfg.tribe.checkpoint)
-    model = TribeModel.from_pretrained(
-        cfg.tribe.checkpoint, cache_folder=str(cfg.tribe_cache), device=device
-    )
+        tick("loading", 0.25, cfg.tribe.checkpoint)
+        model = TribeModel.from_pretrained(
+            cfg.tribe.checkpoint,
+            cache_folder=str(cfg.tribe_cache) if cfg.tribe_cache else None,
+            device=device,
+        )
 
-    tick("extracting", 0.30, "building events")
-    events = model.get_events_dataframe(video_path=str(prepared))
-    modalities = sorted(str(t) for t in events.type.unique())
+        tick("extracting", 0.30, "building events")
 
-    tick("encoding", 0.40, f"modalities: {', '.join(modalities)}")
-    preds, _ = model.predict(events=events, verbose=False)
-    preds = np.asarray(preds)
+        def relay_extract(desc: str, done: int, total: int) -> None:
+            if total:
+                tick("extracting", 0.30 + 0.08 * (done / total), desc[:34])
+
+        with relay_tqdm(relay_extract):
+            events = model.get_events_dataframe(video_path=str(prepared))
+        modalities = sorted(str(t) for t in events.type.unique())
+
+        # The encode is the long part — tens of minutes. Relay its own progress so
+        # the display keeps moving instead of freezing at a single percentage.
+        mods = ", ".join(modalities)
+        tick("encoding", 0.40, mods)
+
+        def relay(desc: str, done: int, total: int) -> None:
+            if not total:
+                return
+            frac = 0.40 + 0.55 * (done / total)
+            label = (desc or "encoding").lower().replace("encoding video", "encoding")
+            tick(label.strip() or "encoding", min(frac, 0.95), f"chunk {done}/{total} · {mods}")
+
+        with relay_tqdm(relay):
+            preds, _ = model.predict(events=events, verbose=False)
+
+        preds = np.asarray(preds)
     tick("done", 1.0, f"{preds.shape[0]} timesteps")
+    if raw_log:
+        # Keep it retrievable without putting it in front of the user by default.
+        (workdir / "run.log").write_text(raw_log[0])
+        notes.append(f"full library output: {workdir / 'run.log'}")
     return preds, modalities, notes

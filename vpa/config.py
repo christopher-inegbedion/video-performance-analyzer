@@ -75,7 +75,11 @@ class TribeConfig:
     # tool works out of the box with vision + audition only.
     enable_language: bool = False
     whisper_model: str = "base.en"  # local word timings, avoids whisperx dependency hell
-    cache_dir: str = ""  # empty -> <data_dir>/tribe-cache
+    # Empty means "use HuggingFace's own shared cache" (~/.cache/huggingface),
+    # which every other tool on the machine already uses. Setting this to a
+    # tool-specific directory downloads a SECOND copy of multi-gigabyte
+    # checkpoints, which is how you fill a disk without noticing.
+    cache_dir: str = ""
 
 
 @dataclass
@@ -100,10 +104,9 @@ class Config:
     analysis: AnalysisConfig = field(default_factory=AnalysisConfig)
 
     @property
-    def tribe_cache(self) -> Path:
-        if self.tribe.cache_dir:
-            return Path(self.tribe.cache_dir)
-        return data_dir() / "tribe-cache"
+    def tribe_cache(self) -> Path | None:
+        """Where to cache model weights. None = HuggingFace's shared cache."""
+        return Path(self.tribe.cache_dir) if self.tribe.cache_dir else None
 
     def api_key(self) -> str | None:
         return os.environ.get(self.llm.api_key_env)

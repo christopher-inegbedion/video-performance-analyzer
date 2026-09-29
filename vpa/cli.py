@@ -11,7 +11,15 @@ from rich.console import Console
 from rich.markdown import Markdown
 from rich.markup import escape
 from rich.panel import Panel
-from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
+from rich.progress import (
+    BarColumn,
+    Progress,
+    SpinnerColumn,
+    TaskProgressColumn,
+    TextColumn,
+    TimeElapsedColumn,
+    TimeRemainingColumn,
+)
 from rich.table import Table
 from rich.text import Text
 
@@ -92,10 +100,12 @@ def analyse(
 
     with Progress(
         SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        BarColumn(bar_width=28),
-        TextColumn("{task.fields[detail]}"),
+        TextColumn("[bold]{task.description:<12}[/bold]"),
+        BarColumn(bar_width=26),
+        TaskProgressColumn(),
+        TextColumn("[dim]{task.fields[detail]}[/dim]"),
         TimeElapsedColumn(),
+        TimeRemainingColumn(compact=True),
         console=console,
     ) as prog:
         task = prog.add_task("starting", total=1.0, detail="")
