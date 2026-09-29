@@ -11,7 +11,7 @@ from __future__ import annotations
 import contextlib
 import logging
 import warnings
-from typing import Iterator
+from collections.abc import Iterator
 
 
 @contextlib.contextmanager
