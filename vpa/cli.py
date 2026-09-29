@@ -79,6 +79,8 @@ def analyse(
     no_llm: bool = typer.Option(False, "--no-llm", help="Skip the recommendation step."),
     export_to: Path = typer.Option(None, "--export", "-o", help="Write a .md or .json report."),
     ask: str = typer.Option(None, "--ask", help="An extra instruction for the analyst."),
+    no_frames: bool = typer.Option(
+        False, "--no-frames", help="Skip extracting the frames at key moments."),
 ) -> None:
     """Score a video and explain what the numbers mean."""
     _ensure_db()
@@ -116,7 +118,7 @@ def analyse(
         try:
             result = pipeline.evaluate(
                 cfg, video, reference, label, reference_label,
-                segments_spec=segments, progress=tick,
+                segments_spec=segments, extract_frames=not no_frames, progress=tick,
             )
         except Exception as exc:  # noqa: BLE001
             prog.stop()
@@ -139,8 +141,12 @@ def analyse(
             console.print("[dim]  The analysis above is unaffected. "
                           "Re-run later with `vpa recommend <id>`.[/dim]")
 
-    report.render(console, result.features, result.video_label,
-                  result.comparison, recs, result.notes)
+    report.render(
+        console, result.features, result.video_label, result.comparison, recs,
+        result.notes,
+        key_frames=[k.to_dict() for k in result.key_frames],
+        contact_sheet_path=result.contact_sheet,
+    )
 
     if result.history and result.history.notes:
         for n in result.history.notes:
@@ -154,8 +160,12 @@ def analyse(
     )
 
     if export_to:
-        path = report.export(export_to, result.features, result.video_label,
-                             result.comparison, recs, result.evaluation_id, result.notes)
+        path = report.export(
+            export_to, result.features, result.video_label, result.comparison, recs,
+            result.evaluation_id, result.notes,
+            key_frames=[k.to_dict() for k in result.key_frames],
+            contact_sheet_path=result.contact_sheet,
+        )
         console.print(f"  report written to [green]{path}[/green]")
 
 
@@ -194,8 +204,12 @@ def show(
         chosen = recs[-1] if generation is None else next(
             (r for r in recs if r["generation"] == generation), None)
 
-    report.render(console, features, label, comparison,
-                  chosen["body"] if chosen else None)
+    stored_frames = pipeline.load_frames(row["id"])
+    report.render(
+        console, features, label, comparison,
+        chosen["body"] if chosen else None,
+        key_frames=stored_frames,
+    )
 
     if len(recs) > 1:
         console.print()
@@ -209,8 +223,11 @@ def show(
         console.print(f"  [dim]see an older one: vpa show {row['id'][:12]} -g 1[/dim]")
 
     if export_to:
-        path = report.export(export_to, features, label, comparison,
-                             chosen["body"] if chosen else None, row["id"])
+        path = report.export(
+            export_to, features, label, comparison,
+            chosen["body"] if chosen else None, row["id"],
+            key_frames=stored_frames,
+        )
         console.print(f"\n  report written to [green]{path}[/green]")
 
 

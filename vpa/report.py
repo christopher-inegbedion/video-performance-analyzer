@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
+import os
+import shutil
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -106,6 +109,25 @@ def comparison_table(cmp: Comparison) -> Table:
     return t
 
 
+def frames_table(key_frames: list[dict]) -> Table:
+    """The moments worth actually looking at, with where to find them."""
+    t = Table(show_header=True, header_style="bold", box=None)
+    t.add_column("moment", width=18)
+    t.add_column("at", justify="right", width=8)
+    t.add_column("value", justify="right", width=7)
+    t.add_column("frame", style="dim", overflow="fold")
+    for k in key_frames:
+        value = float(k.get("value", 1.0))
+        style = "green" if value >= 1.10 else ("red" if value <= 0.90 else "")
+        t.add_row(
+            k.get("label", ""),
+            f"{float(k.get('time_s', 0)):.1f}s",
+            Text(f"{value:.3f}", style=style),
+            Path(k.get("path", "")).name,
+        )
+    return t
+
+
 def render(
     console: Console,
     features: Features,
@@ -113,6 +135,8 @@ def render(
     comparison: Comparison | None = None,
     recommendations: str | None = None,
     notes: list[str] | None = None,
+    key_frames: list[dict] | None = None,
+    contact_sheet_path: str | None = None,
 ) -> None:
     console.print()
     console.print(Panel(
@@ -127,6 +151,22 @@ def render(
     if seg := segments_table(features):
         console.print()
         console.print(Panel(seg, title="sections", border_style="dim"))
+
+    if key_frames:
+        console.print()
+        console.print(Panel(
+            frames_table(key_frames),
+            title="key moments — the actual frames",
+            border_style="blue",
+        ))
+        trough = next((k for k in key_frames if k.get("label") == "trough"), None)
+        if trough:
+            console.print(
+                f"  [dim]The sag is at {float(trough['time_s']):.1f}s. "
+                f"Open that frame before deciding what to change.[/dim]"
+            )
+        if contact_sheet_path:
+            console.print(f"  [dim]all moments in one image: {contact_sheet_path}[/dim]")
 
     if comparison:
         console.print()
@@ -170,6 +210,9 @@ def to_markdown(
     recommendations: str | None = None,
     evaluation_id: str = "",
     notes: list[str] | None = None,
+    key_frames: list[dict] | None = None,
+    contact_sheet_path: str | None = None,
+    report_dir: Path | None = None,
 ) -> str:
     L: list[str] = []
     L.append(f"# Video analysis — {video_label}")
@@ -206,6 +249,38 @@ def to_markdown(
         for s in features.segments:
             L.append(f"| {s.label} | {s.start_s:.1f}-{s.end_s:.1f}s | {s.mean:.3f} | {s.verdict} |")
         L.append("")
+
+    if key_frames:
+        L.append("## Key moments")
+        L.append("")
+        L.append("The frames at the moments the curve flags. A timestamp is not a "
+                 "decision; these are what you actually change.")
+        L.append("")
+        for k in key_frames:
+            path = Path(k.get("path", ""))
+            # Relative links so the report stays portable next to its frames.
+            link = (
+                os.path.relpath(path, report_dir)
+                if report_dir and path.exists()
+                else path.as_posix()
+            )
+            L.append(f"### {k.get('label', '')} — {float(k.get('time_s', 0)):.1f}s "
+                     f"({float(k.get('value', 1)):.3f})")
+            L.append("")
+            L.append(f"![{k.get('label', '')}]({link})")
+            L.append("")
+            if note := k.get("note"):
+                L.append(f"> {note}")
+                L.append("")
+        if contact_sheet_path:
+            sheet = Path(contact_sheet_path)
+            link = (
+                os.path.relpath(sheet, report_dir)
+                if report_dir and sheet.exists()
+                else sheet.as_posix()
+            )
+            L.append(f"![all key moments]({link})")
+            L.append("")
 
     if comparison:
         L.append(f"## Compared against: {comparison.reference_label}")
@@ -252,6 +327,39 @@ def to_markdown(
     return "\n".join(L)
 
 
+def _localise_frames(
+    key_frames: list[dict] | None,
+    contact_sheet_path: str | None,
+    report_path: Path,
+) -> tuple[list[dict] | None, str | None]:
+    """Copy frames beside the report so it can be moved or sent as a unit."""
+    if not key_frames and not contact_sheet_path:
+        return key_frames, contact_sheet_path
+
+    asset_dir = report_path.parent / f"{report_path.stem}_frames"
+    asset_dir.mkdir(parents=True, exist_ok=True)
+
+    copied: list[dict] = []
+    for frame in key_frames or []:
+        source = Path(frame.get("path", ""))
+        if not source.exists():
+            copied.append(frame)
+            continue
+        target = asset_dir / source.name
+        with contextlib.suppress(OSError):
+            shutil.copy2(source, target)
+        copied.append({**frame, "path": str(target)})
+
+    sheet = contact_sheet_path
+    if contact_sheet_path and Path(contact_sheet_path).exists():
+        target = asset_dir / Path(contact_sheet_path).name
+        with contextlib.suppress(OSError):
+            shutil.copy2(contact_sheet_path, target)
+            sheet = str(target)
+
+    return copied, sheet
+
+
 def export(
     path: Path,
     features: Features,
@@ -260,8 +368,19 @@ def export(
     recommendations: str | None = None,
     evaluation_id: str = "",
     notes: list[str] | None = None,
+    key_frames: list[dict] | None = None,
+    contact_sheet_path: str | None = None,
 ) -> Path:
-    md = to_markdown(features, video_label, comparison, recommendations, evaluation_id, notes)
+    # Copy the frames next to the report. Without this the links point back into
+    # the data directory, so the moment someone moves or sends the report the
+    # images break — which defeats the point of embedding them.
+    local_frames, local_sheet = _localise_frames(
+        key_frames, contact_sheet_path, path
+    )
+    md = to_markdown(
+        features, video_label, comparison, recommendations, evaluation_id, notes,
+        local_frames, local_sheet, report_dir=path.parent,
+    )
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.suffix.lower() == ".json":
         payload: dict[str, Any] = {
@@ -271,6 +390,8 @@ def export(
             "comparison": comparison.to_dict() if comparison else None,
             "recommendations": recommendations,
             "notes": notes or [],
+            "key_frames": key_frames or [],
+            "contact_sheet": contact_sheet_path,
         }
         path.write_text(json.dumps(payload, indent=2))
     else:

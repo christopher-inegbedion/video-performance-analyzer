@@ -17,7 +17,7 @@ from typing import Any
 
 from .config import data_dir
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -53,6 +53,7 @@ CREATE TABLE IF NOT EXISTS evaluations (
     preds_path    TEXT,
     features      TEXT,                 -- json blob from analysis.features
     comparison    TEXT,                 -- json blob from analysis.compare
+    frames        TEXT,                 -- json list of extracted key frames
     error         TEXT,
     started_at    REAL,
     finished_at   REAL,
@@ -127,9 +128,17 @@ def connect(path: Path | None = None) -> Iterator[sqlite3.Connection]:
         conn.close()
 
 
+def _migrate(conn: sqlite3.Connection) -> None:
+    """Additive migrations only. A user's evaluation history is not disposable."""
+    columns = {r["name"] for r in conn.execute("PRAGMA table_info(evaluations)")}
+    if "frames" not in columns:
+        conn.execute("ALTER TABLE evaluations ADD COLUMN frames TEXT")
+
+
 def init(path: Path | None = None) -> None:
     with connect(path) as conn:
         conn.executescript(_SCHEMA)
+        _migrate(conn)
         conn.execute(
             "INSERT OR REPLACE INTO meta(key, value) VALUES('schema_version', ?)",
             (str(SCHEMA_VERSION),),
@@ -205,7 +214,7 @@ def create_evaluation(
 def update_evaluation(eid: str, path: Path | None = None, **fields: Any) -> None:
     if not fields:
         return
-    for key in ("features", "comparison", "modalities"):
+    for key in ("features", "comparison", "modalities", "frames"):
         if key in fields and not isinstance(fields[key], (str, type(None))):
             fields[key] = json.dumps(fields[key])
     sets = ", ".join(f"{k}=:{k}" for k in fields)

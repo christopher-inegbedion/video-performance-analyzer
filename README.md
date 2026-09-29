@@ -95,6 +95,26 @@ vpa explain artefacts                     # what the numbers can't tell you
 vpa tui                                   # interactive session
 ```
 
+### Seeing the moments, not just the numbers
+
+Every run extracts the actual frames at the moments the curve flags — the
+opening, the peak, the trough, the middle of each section you defined — and
+tiles them into one contact sheet.
+
+This is the difference between a report and a decision. "Your trough is at
+14.4s" makes you go and scrub through your own edit; the frame at 14.4s tells
+you what to change.
+
+```
+key moments — the actual frames
+  moment                 at   value  frame
+  opening              0.5s   1.042  opening_000.50s.jpg
+  peak                 2.4s   1.157  peak_002.40s.jpg
+  trough               4.6s   0.696  trough_004.60s.jpg
+```
+
+Markdown exports embed the images inline. Use `--no-frames` to skip extraction.
+
 ### Describing your structure
 
 Even segments are a poor guide. Tell it where your real beats are and the report

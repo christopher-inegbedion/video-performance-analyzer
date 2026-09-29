@@ -10,11 +10,12 @@ import contextlib
 import hashlib
 import json
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from . import db, learn, tribe
+from . import frames as frames_mod
 from .analysis import compare as cmp_mod
 from .analysis import features as feat_mod
 from .config import Config, data_dir
@@ -93,6 +94,8 @@ class EvaluationResult:
     learned: learn.LearnedModel
     notes: list[str]
     video_label: str
+    key_frames: list[Any] = field(default_factory=list)
+    contact_sheet: str | None = None
 
 
 def evaluate(
@@ -103,6 +106,7 @@ def evaluate(
     reference_label: str | None = None,
     segments_spec: str | None = None,
     n_auto_segments: int = 4,
+    extract_frames: bool = True,
     progress: ProgressFn | None = None,
     reuse_reference: bool = True,
 ) -> EvaluationResult:
@@ -194,6 +198,16 @@ def evaluate(
                 same_shape_r=cfg.analysis.same_shape_r,
             )
 
+        # --- the actual frames at the moments the curve flags
+        key_frames: list[Any] = []
+        sheet: str | None = None
+        if extract_frames:
+            frame_dir = work_dir(eval_id) / "frames"
+            key_frames = frames_mod.extract(Path(vrow["path"]), features, frame_dir)
+            if key_frames:
+                made = frames_mod.contact_sheet(key_frames, frame_dir / "contact-sheet.jpg")
+                sheet = str(made) if made else None
+
         # --- position within the user's own history
         hist_entries = [
             h for h in learn.history_for_comparison() if h["evaluation_id"] != eval_id
@@ -210,10 +224,12 @@ def evaluate(
             preds_path=str(preds_path),
             features=features.to_dict(),
             comparison=comparison.to_dict() if comparison else None,
+            frames=[k.to_dict() for k in key_frames],
             finished_at=__import__("time").time(),
         )
         return EvaluationResult(
-            eval_id, features, comparison, history, learned, notes, video_label
+            eval_id, features, comparison, history, learned, notes, video_label,
+            key_frames=key_frames, contact_sheet=sheet,
         )
 
     except Exception as exc:
@@ -222,6 +238,17 @@ def evaluate(
             finished_at=__import__("time").time()
         )
         raise
+
+
+def load_frames(eval_id: str) -> list[dict[str, Any]]:
+    """Key frames stored with an evaluation, if it was scored with them."""
+    row = db.get_evaluation(eval_id)
+    if not row:
+        return []
+    with contextlib.suppress(json.JSONDecodeError, TypeError, IndexError, KeyError):
+        if row["frames"]:
+            return json.loads(row["frames"])
+    return []
 
 
 def load_result(eval_id: str) -> tuple[feat_mod.Features | None, cmp_mod.Comparison | None, Any]:
