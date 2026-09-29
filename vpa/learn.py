@@ -35,12 +35,17 @@ def engagement_rate(row: Any) -> float | None:
     Falls back to raw likes when views are missing, and returns None when there
     is nothing usable, so callers can skip rather than invent a number.
     """
-    views = row["views"] if isinstance(row, dict) else row["views"]
-    likes = row["likes"] if isinstance(row, dict) else row["likes"]
-    comments = (row["comments"] if isinstance(row, dict) else row["comments"]) or 0
-    shares = (row["shares"] if isinstance(row, dict) else row["shares"]) or 0
-    saves = (row["saves"] if isinstance(row, dict) else row["saves"]) or 0
-    interactions = (likes or 0) + comments + shares + saves
+    views = row["views"]
+    parts = [row["likes"], row["comments"], row["shares"], row["saves"]]
+
+    # "Not recorded" and "recorded as zero" are different facts and must not
+    # collapse. A views-only row previously scored 0.0 engagement, which reads
+    # as "nobody interacted" when the truth is "nobody counted" — that silently
+    # drags the correlations toward a floor that was never observed.
+    if all(p is None for p in parts):
+        return None
+
+    interactions = sum(p or 0 for p in parts)
     if views and views > 0:
         return round(interactions / views, 6)
     if interactions:
@@ -68,6 +73,7 @@ class LearnedModel:
     worst: dict[str, Any] | None = None
     caveat: str = ""
     usable: bool = False
+    pending: int = 0      # have metrics, not yet usable for learning
 
     def as_dict(self) -> dict[str, Any]:
         d = asdict(self)
@@ -77,6 +83,14 @@ class LearnedModel:
 
     def summary_text(self) -> str:
         if not self.n_labelled:
+            if self.pending:
+                return (
+                    f"{self.pending} video(s) have metrics recorded but not yet usable "
+                    "for learning — each needs a finished evaluation and at least one "
+                    "interaction count (likes, comments, shares or saves), since views "
+                    "alone cannot say how people responded. Recommendations are based "
+                    "on the model's predictions alone."
+                )
             return ("No published performance recorded yet, so recommendations are based "
                     "on the model's predictions alone.")
         lines = [f"Learned from {self.n_labelled} video(s) with recorded performance."]
@@ -110,21 +124,26 @@ def build(path=None) -> LearnedModel:
     """Fit the (very small) model relating predicted features to real outcomes."""
     rows = db.labelled_history(path)
     pairs: list[tuple[dict, float, str]] = []
+    unusable = 0
     for r in rows:
         try:
             feats = json.loads(r["features"]) if r["features"] else None
         except json.JSONDecodeError:
             continue
-        if not feats:
-            continue
         eng = engagement_rate(r)
-        if eng is None:
+        if not feats or eng is None:
+            unusable += 1
             continue
         pairs.append((feats, eng, r["label"] or r["video_id"]))
 
     n = len(pairs)
     if n == 0:
-        return LearnedModel(0, caveat="No labelled videos yet.", usable=False)
+        return LearnedModel(
+            0,
+            caveat="No labelled videos yet.",
+            usable=False,
+            pending=unusable,
+        )
 
     correlations: list[Correlation] = []
     if n >= MIN_FOR_HINT:

@@ -385,9 +385,9 @@ def metrics_show() -> None:
     model = learn.build()
     if not model.n_labelled:
         console.print(Panel(
-            "No published performance recorded yet.\n\n"
-            "Recommendations currently rest on the model's predictions alone. Add real\n"
-            "outcomes and they start being weighted against what actually happened:\n\n"
+            model.summary_text() + "\n\n"
+            "Add real outcomes and they start being weighted against what\n"
+            "actually happened:\n\n"
             "  vpa metrics add my-video --views 12400 --likes 380",
             title="learning", border_style="yellow"))
         return
