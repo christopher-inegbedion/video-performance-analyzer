@@ -231,8 +231,10 @@ def patch_whisperx_compute_type() -> str | None:
     Only relevant if you let TRIBE call whisperx itself; we normally bypass it.
     """
     try:
-        import tribev2  # noqa: F401
-        from tribev2 import eventstransforms
+        from .quiet import quiet_imports
+
+        with quiet_imports():
+            from tribev2 import eventstransforms
     except ModuleNotFoundError:
         return None
     src = Path(eventstransforms.__file__)
@@ -284,7 +286,11 @@ def run(
 
     try:
         import numpy as np
-        from tribev2 import TribeModel
+
+        from .quiet import quiet_imports
+
+        with quiet_imports():
+            from tribev2 import TribeModel
     except ModuleNotFoundError as exc:  # pragma: no cover
         raise TribeError(
             "TRIBE is not installed. Install the optional extras and the model:\n"

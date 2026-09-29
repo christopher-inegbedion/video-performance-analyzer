@@ -625,7 +625,10 @@ def doctor() -> None:
     except ModuleNotFoundError:
         check("torch", False, fix="pip install 'video-performance-analyzer[tribe]'")
     try:
-        import tribev2  # noqa: F401
+        from .quiet import quiet_imports
+
+        with quiet_imports():
+            import tribev2  # noqa: F401
 
         check("tribev2", True)
     except ModuleNotFoundError:
