@@ -50,7 +50,7 @@ class LLMConfig:
     temperature: float = 0.3
     timeout_s: int = 120
     # Optional OpenRouter attribution headers
-    referer: str = "https://github.com/yourname/video-performance-analyzer"
+    referer: str = "https://github.com/christopher-inegbedion/video-performance-analyzer"
     title: str = "video-performance-analyzer"
 
 

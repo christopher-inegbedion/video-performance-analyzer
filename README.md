@@ -51,9 +51,15 @@ Use it to rank variants of the same idea. Don't use it as a verdict on one video
 
 ## Install
 
+Not on PyPI yet — install from source:
+
 ```bash
-pip install video-performance-analyzer          # core
-pip install 'video-performance-analyzer[tribe]' # + scoring dependencies
+git clone https://github.com/christopher-inegbedion/video-performance-analyzer.git
+cd video-performance-analyzer
+python3.12 -m venv .venv && source .venv/bin/activate
+
+pip install -e .                         # core
+pip install -e '.[tribe]'                # + scoring dependencies (~3GB of models)
 pip install git+https://github.com/facebookresearch/tribev2.git
 ```
 

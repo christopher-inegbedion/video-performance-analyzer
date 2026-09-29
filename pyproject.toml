@@ -7,7 +7,8 @@ name = "video-performance-analyzer"
 version = "0.1.0"
 description = "Predict and compare how videos land, using Meta's TRIBE v2 brain-encoding model, with LLM recommendations that learn from real performance."
 readme = "README.md"
-requires-python = ">=3.10"
+# Verified on 3.11, 3.12 and 3.13. 3.10 will probably work but is untested.
+requires-python = ">=3.11"
 license = { text = "MIT" }
 authors = [{ name = "video-performance-analyzer contributors" }]
 keywords = ["video", "tribe", "fmri", "neuroscience", "creative", "analysis", "ffmpeg"]
@@ -24,8 +25,10 @@ dependencies = [
   "numpy>=1.26",
   "httpx>=0.27",
   "platformdirs>=4.2",
+  # Core, not optional: the progress relay in vpa/quiet.py is what keeps a
+  # 40-minute encode followable, and it silently does nothing without tqdm.
+  "tqdm>=4.66",
   "tomli-w>=1.0",
-  "tomli>=2.0; python_version < '3.11'",
 ]
 
 [project.optional-dependencies]
@@ -33,8 +36,8 @@ tribe = ["torch>=2.5,<2.7", "faster-whisper>=1.0"]
 dev = ["pytest>=8", "ruff>=0.5"]
 
 [project.urls]
-Homepage = "https://github.com/yourname/video-performance-analyzer"
-Issues = "https://github.com/yourname/video-performance-analyzer/issues"
+Homepage = "https://github.com/christopher-inegbedion/video-performance-analyzer"
+Issues = "https://github.com/christopher-inegbedion/video-performance-analyzer/issues"
 
 [project.scripts]
 vpa = "vpa.cli:app"
@@ -44,7 +47,7 @@ packages = ["vpa"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py310"
+target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM", "PL", "DTZ"]
