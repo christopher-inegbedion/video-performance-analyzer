@@ -205,6 +205,6 @@ pytest -q
 ruff check vpa
 ```
 
-Contributions welcome — particularly platform connectors for metrics ingestion
-(there is a documented seam in `vpa/metrics.py`) and additional LLM providers
-(`vpa/providers/`).
+Contributions welcome — see [CONTRIBUTING.md](CONTRIBUTING.md). Platform
+connectors for metrics ingestion (`vpa/metrics.py` has a documented seam) and
+additional LLM providers (`vpa/providers/`) are the most useful places to start.
