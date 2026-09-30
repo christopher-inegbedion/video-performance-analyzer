@@ -38,13 +38,18 @@ def sha1_of(path: Path, chunk: int = 1 << 20) -> str:
 
 
 def register_video(
-    path: Path, label: str | None = None, kind: str = "subject", reuse: bool = True
+    path: Path, label: str | None = None, kind: str = "subject", reuse: bool = True,
+    source_url: str | None = None,
 ) -> str:
     """Add a video to the store, reusing the row if we've seen this file before."""
     path = path.expanduser().resolve()
     info = tribe.probe(path)
     digest = sha1_of(path)
     if reuse and (existing := db.find_video_by_sha1(digest)):
+        # Same bytes, but this time we know where they came from. Record the
+        # link so the stats can be refreshed later.
+        if source_url and not existing["source_url"]:
+            db.set_source_url(existing["id"], source_url)
         return existing["id"]
     return db.add_video(
         {
@@ -57,6 +62,7 @@ def register_video(
             "fps": info.fps,
             "has_audio": info.has_audio,
             "sha1": digest,
+            "source_url": source_url,
         }
     )
 
@@ -109,14 +115,18 @@ def evaluate(
     extract_frames: bool = True,
     progress: ProgressFn | None = None,
     reuse_reference: bool = True,
+    source_url: str | None = None,
+    reference_source_url: str | None = None,
 ) -> EvaluationResult:
     """The full flow: score, analyse, compare, persist."""
     notes: list[str] = []
 
-    video_id = register_video(video_path, label=label, kind="subject")
+    video_id = register_video(video_path, label=label, kind="subject",
+                              source_url=source_url)
     ref_id = None
     if reference_path:
-        ref_id = register_video(reference_path, label=reference_label, kind="reference")
+        ref_id = register_video(reference_path, label=reference_label, kind="reference",
+                                source_url=reference_source_url)
 
     eval_id = db.create_evaluation(video_id, ref_id, cfg.tribe.checkpoint)
     vrow = db.get_video(video_id)

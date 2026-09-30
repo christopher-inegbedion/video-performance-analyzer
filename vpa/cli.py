@@ -24,7 +24,7 @@ from rich.table import Table
 from rich.text import Text
 
 from . import config as config_mod
-from . import db, explain, learn, metrics, pipeline, recommend, report, tribe
+from . import db, explain, fetch, learn, metrics, pipeline, recommend, report, tribe
 from .providers import LLMError
 
 app = typer.Typer(
@@ -57,6 +57,62 @@ def _ts(value) -> str:
     return datetime.fromtimestamp(float(value)).strftime("%Y-%m-%d %H:%M")
 
 
+def _resolve_input(value, role: str):
+    """Turn a CLI argument into a local file, downloading it if it is a link.
+
+    Returns (path, SourceInfo | None). The SourceInfo is what lets a fetched
+    video carry its published stats into the metrics store.
+    """
+    if value is None:
+        return None, None
+    text = str(value)
+    if not fetch.is_url(text):
+        path = Path(text).expanduser()
+        if not path.exists():
+            _fail(f"No such file: {path}",
+                  "Pass a file path, or a link for the tool to fetch.")
+        return path, None
+
+    console.print(f"  [dim]fetching {role} from {text}[/dim]")
+    try:
+        path, info = fetch.fetch(text, pipeline.data_dir() / "downloads")
+    except fetch.FetchError as exc:
+        _fail(str(exc))
+    bits = [b for b in (info.uploader, f"{info.duration_s:.0f}s" if info.duration_s else None)
+            if b]
+    console.print(f"  [green]✓[/green] fetched {path.name}"
+                  + (f" [dim]({' · '.join(bits)})[/dim]" if bits else ""))
+    if info.views is not None:
+        console.print(
+            f"  [dim]published stats: {info.views:,} views"
+            + (f" · {info.likes:,} likes" if info.likes is not None else "")
+            + "[/dim]"
+        )
+    return path, info
+
+
+def _capture_stats(video_label: str, info, enabled: bool) -> None:
+    """Record the platform's own numbers against the video just analysed."""
+    if info is None or not enabled:
+        return
+    if not info.has_metrics():
+        # Views with no interaction count cannot be scored, so saying we
+        # captured performance would overstate what we actually have.
+        if info.views is not None:
+            console.print(
+                "  [yellow]note[/yellow] the platform gave views but no like count, "
+                "which is not enough to learn from. Add one with "
+                f"[bold]vpa metrics add {video_label} --likes N[/bold]."
+            )
+        return
+    try:
+        metrics.record(video_label, **info.metric_fields())
+    except ValueError as exc:
+        console.print(f"  [yellow]could not record stats:[/yellow] {exc}")
+        return
+    console.print("  [green]✓[/green] recorded the published stats for this video")
+
+
 def _ensure_db() -> None:
     db.init()
 
@@ -66,11 +122,11 @@ def _ensure_db() -> None:
 
 @app.command()
 def analyse(
-    video: Path = typer.Argument(..., help="The video you made."),
-    reference: Path = typer.Option(
+    video: str = typer.Argument(..., help="The video you made — a file path or a link."),
+    reference: str = typer.Option(
         None, "--reference", "-r",
         help="A video to compare against — a competitor's ad, your last post, "
-             "something you want to emulate."),
+             "something you want to emulate. A file path or a link."),
     label: str = typer.Option(None, "--label", "-l", help="Name for this video."),
     reference_label: str = typer.Option(None, "--reference-label"),
     segments: str = typer.Option(
@@ -81,13 +137,21 @@ def analyse(
     ask: str = typer.Option(None, "--ask", help="An extra instruction for the analyst."),
     no_frames: bool = typer.Option(
         False, "--no-frames", help="Skip extracting the frames at key moments."),
+    no_capture: bool = typer.Option(
+        False, "--no-capture",
+        help="Do not record the view/like counts that come with a fetched link."),
 ) -> None:
-    """Score a video and explain what the numbers mean."""
+    """Score a video and explain what the numbers mean.
+
+    Accepts a local file or a link (TikTok, YouTube, Instagram, anything
+    yt-dlp reads). A fetched link also carries its published stats, which are
+    recorded automatically so the tool learns from real outcomes.
+    """
     _ensure_db()
     cfg = config_mod.load()
 
-    if not video.exists():
-        _fail(f"No such file: {video}")
+    video, source_info = _resolve_input(video, "video")
+    reference, reference_info = _resolve_input(reference, "reference")
 
     # Tell the user what they are committing to before a long encode starts,
     # so a 38-minute run doesn't look like a hang.
@@ -119,10 +183,18 @@ def analyse(
             result = pipeline.evaluate(
                 cfg, video, reference, label, reference_label,
                 segments_spec=segments, extract_frames=not no_frames, progress=tick,
+                source_url=source_info.url if source_info else None,
+                reference_source_url=reference_info.url if reference_info else None,
             )
         except Exception as exc:  # noqa: BLE001
             prog.stop()
             _fail(str(exc), "Run `vpa doctor` to check your setup.")
+
+    # Capture the published numbers before the recommendation step, so the
+    # model reasons with this video's real outcome rather than without it.
+    _capture_stats(result.video_label, source_info, not no_capture)
+    if reference_info is not None and not no_capture:
+        _capture_stats(reference_label or reference_info.title or "", reference_info, True)
 
     recs = None
     if not no_llm:
@@ -376,6 +448,56 @@ def metrics_template(
     """Write a CSV template you can fill in."""
     path = metrics.write_template(target)
     console.print(f"[green]✓[/green] template written to [green]{path}[/green]")
+
+
+@metrics_app.command("sync")
+def metrics_sync(
+    video: str = typer.Argument(
+        None, help="Video label or id. Omit to refresh every linked video."),
+) -> None:
+    """Re-read the published stats for videos that came from a link.
+
+    Views and likes keep accruing after a post goes up, so a number typed in
+    an hour after publishing and one read a week later are not comparable.
+    Re-syncing on a fixed schedule is what makes the history a series rather
+    than a set of unrelated snapshots.
+    """
+    _ensure_db()
+    rows = [r for r in db.list_videos() if r["source_url"]]
+    if video:
+        vid = metrics.resolve_video(video)
+        if not vid:
+            _fail(f"No video matching {video!r}.")
+        rows = [r for r in rows if r["id"] == vid]
+        if not rows:
+            _fail(f"{video} has no source link, so there is nothing to sync.",
+                  "Only videos analysed from a URL can be refreshed.")
+    if not rows:
+        console.print("[dim]No videos were fetched from a link, so there is "
+                      "nothing to sync.[/dim]")
+        return
+
+    updated = 0
+    for row in rows:
+        label = row["label"] or row["id"]
+        try:
+            info = fetch.probe(row["source_url"])
+        except fetch.FetchError as exc:
+            console.print(f"  [yellow]![/yellow] {label}: {exc}")
+            continue
+        if not info.has_metrics():
+            console.print(f"  [yellow]![/yellow] {label}: no interaction counts returned")
+            continue
+        metrics.record(label, **info.metric_fields())
+        updated += 1
+        console.print(
+            f"  [green]✓[/green] {label}: {info.views:,} views"
+            + (f" · {info.likes:,} likes" if info.likes is not None else "")
+        )
+
+    if updated:
+        console.print(f"\n  refreshed {updated} video(s). "
+                      "Past advice can be revised with [bold]vpa retrofit[/bold].")
 
 
 @metrics_app.command("show")
@@ -650,6 +772,8 @@ def doctor() -> None:
 
     check("ffmpeg", _sh.which("ffmpeg") is not None, fix="brew install ffmpeg")
     check("ffprobe", _sh.which("ffprobe") is not None, fix="brew install ffmpeg")
+    check("yt-dlp", _sh.which("yt-dlp") is not None,
+          fix="pip install 'video-performance-analyzer[fetch]'  (only needed for links)")
     check("python", True, f"{sys.version.split()[0]}")
 
     console.print("\n[bold]models[/bold]")

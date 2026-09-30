@@ -17,7 +17,7 @@ from typing import Any
 
 from .config import data_dir
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -37,6 +37,7 @@ CREATE TABLE IF NOT EXISTS videos (
     fps          REAL,
     has_audio    INTEGER NOT NULL DEFAULT 0,
     sha1         TEXT,
+    source_url   TEXT,                                -- where it was fetched from
     created_at   REAL NOT NULL
 );
 
@@ -133,6 +134,9 @@ def _migrate(conn: sqlite3.Connection) -> None:
     columns = {r["name"] for r in conn.execute("PRAGMA table_info(evaluations)")}
     if "frames" not in columns:
         conn.execute("ALTER TABLE evaluations ADD COLUMN frames TEXT")
+    vcols = {r["name"] for r in conn.execute("PRAGMA table_info(videos)")}
+    if "source_url" not in vcols:
+        conn.execute("ALTER TABLE videos ADD COLUMN source_url TEXT")
 
 
 def init(path: Path | None = None) -> None:
@@ -153,9 +157,9 @@ def add_video(row: dict[str, Any], path: Path | None = None) -> str:
     with connect(path) as conn:
         conn.execute(
             """INSERT INTO videos(id, path, label, kind, duration_s, width, height,
-                                  fps, has_audio, sha1, created_at)
+                                  fps, has_audio, sha1, source_url, created_at)
                VALUES(:id,:path,:label,:kind,:duration_s,:width,:height,:fps,
-                      :has_audio,:sha1,:created_at)""",
+                      :has_audio,:sha1,:source_url,:created_at)""",
             {
                 "id": vid,
                 "path": str(row["path"]),
@@ -167,6 +171,7 @@ def add_video(row: dict[str, Any], path: Path | None = None) -> str:
                 "fps": row.get("fps"),
                 "has_audio": int(bool(row.get("has_audio"))),
                 "sha1": row.get("sha1"),
+                "source_url": row.get("source_url"),
                 "created_at": time.time(),
             },
         )
@@ -176,6 +181,16 @@ def add_video(row: dict[str, Any], path: Path | None = None) -> str:
 def find_video_by_sha1(sha1: str, path: Path | None = None) -> sqlite3.Row | None:
     with connect(path) as conn:
         return conn.execute("SELECT * FROM videos WHERE sha1=?", (sha1,)).fetchone()
+
+
+def set_source_url(vid: str, url: str, path: Path | None = None) -> None:
+    """Attach a source link to a video we already had on disk.
+
+    A file can be registered first and recognised as a published post later;
+    recording the link then is what lets `metrics sync` refresh its numbers.
+    """
+    with connect(path) as conn:
+        conn.execute("UPDATE videos SET source_url=? WHERE id=?", (url, vid))
 
 
 def get_video(vid: str, path: Path | None = None) -> sqlite3.Row | None:

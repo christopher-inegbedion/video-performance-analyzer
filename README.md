@@ -88,6 +88,7 @@ vpa doctor      # tells you exactly what is missing
 ```bash
 vpa analyse cut.mp4                       # score one video
 vpa analyse cut.mp4 -r reference.mp4      # compare against something
+vpa analyse https://tiktok.com/@you/...   # fetch a published post and score it
 vpa show eval_a1b2c3                      # revisit a past evaluation
 vpa list evals                            # everything you have run
 vpa ask eval_a1b2c3                       # ask questions about it
@@ -123,6 +124,44 @@ speaks your language:
 ```bash
 vpa analyse cut.mp4 --segments "hook:0-3,montage:3-16,card:16-19,logo:19-24"
 ```
+
+### Analysing a published post
+
+Anywhere a file path is accepted, a link works too — TikTok, YouTube, Instagram,
+anything `yt-dlp` can read:
+
+```bash
+vpa analyse "https://www.tiktok.com/@you/video/7412345"
+vpa analyse new-cut.mp4 -r "https://www.tiktok.com/@rival/video/7409999"
+```
+
+The video is downloaded and scored exactly as a local file would be. The useful
+part is what comes with it: a published post carries its own view, like, comment
+and share counts, and those are **recorded automatically** as that video's real
+performance. One command both scores a post and files the outcome the tool
+learns from.
+
+Stats keep accruing after a post goes up, so a number read an hour after
+publishing is not comparable with one read a week later. Re-read them whenever
+you like:
+
+```bash
+vpa metrics sync                  # refresh every video that came from a link
+vpa metrics sync my-cut-v3        # or just one
+```
+
+Picking a fixed horizon — say 72 hours — and syncing then is what turns a pile
+of snapshots into a series you can actually fit a model against.
+
+Fetching needs `yt-dlp`, which is an optional extra:
+
+```bash
+pip install 'video-performance-analyzer[fetch]'
+```
+
+Without it, links fail with an install hint and local files keep working. A post
+that returns views but no like count is reported rather than recorded, because
+views alone cannot be scored.
 
 ### The learning loop
 
